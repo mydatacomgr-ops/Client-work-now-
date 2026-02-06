@@ -133,6 +133,7 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
     severance: ["ΑΠΟΖ/ΣΕΙΣ (Severance Payments)", "Severance Payments"],
     contributionMargin: ["Contribution Margin"],
     ebitda: ["EBITDA"],
+    salesOfServices: ["ΠΩΛΗΣΕΙΣ BLUE (BLUE SALES)", "ΠΩΛΗΣΕΙΣ BLUE", "Blue Sales", "Sales of Services"],
   };
 
   // Sum helper that removes euro symbol and parses
@@ -150,6 +151,8 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
   }
 
   const sales = sum(colNames.sales);
+  const salesOfServices = sum(colNames.salesOfServices);
+  const totalRevenue = sales + salesOfServices;
   const purchases = sum(colNames.purchases);
   const payroll = sum(colNames.payroll);
   const utilities = sum(colNames.utilities);
@@ -171,6 +174,8 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
 
   return {
     sales,
+    salesOfServices,
+    totalRevenue,
     purchases,
     payroll,
     utilities,
@@ -180,14 +185,14 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
     ebitda,
     severance,
     contributionMargin,
-    foodCostPercent: percent(purchases, sales),
-    payrollPercent: percent(payroll, sales),
-    utilitiesPercent: percent(utilities, sales),
-    otherExpensesPercent: percent(otherExpenses, sales),
-    rentPercent: percent(rent, sales),
-    feesPercent: percent(fees, sales),
-    ebitdaPercent: percent(ebitda, sales),
-    contributionMarginPercent: percent(contributionMargin, sales),
+    foodCostPercent: percent(purchases, totalRevenue),
+    payrollPercent: percent(payroll, totalRevenue),
+    utilitiesPercent: percent(utilities, totalRevenue),
+    otherExpensesPercent: percent(otherExpenses, totalRevenue),
+    rentPercent: percent(rent, totalRevenue),
+    feesPercent: percent(fees, totalRevenue),
+    ebitdaPercent: percent(ebitda, totalRevenue),
+    contributionMarginPercent: percent(contributionMargin, totalRevenue),
   };
 }
 
@@ -1004,15 +1009,17 @@ export default function DashboardPage() {
             const isSeverance =
               col === "Severance Payments" || col.includes("ΑΠΟΖ/ΣΕΙΣ");
 
-            // Calculate percentage for this column relative to Sales
+            // Calculate percentage for this column relative to Total Revenue (Sales + Sales of Services)
             let percentage = "—";
             if (
-              kpis.sales &&
-              kpis.sales !== 0 &&
+              kpis.totalRevenue &&
+              kpis.totalRevenue !== 0 &&
               col !== "ΠΩΛΗΣΕΙΣ (SALES)" &&
-              col !== "Sales"
+              col !== "Sales" &&
+              col !== "ΠΩΛΗΣΕΙΣ BLUE (BLUE SALES)" &&
+              col !== "Blue Sales"
             ) {
-              percentage = ((totalValue / kpis.sales) * 100).toFixed(2) + "%";
+              percentage = ((totalValue / kpis.totalRevenue) * 100).toFixed(2) + "%";
             }
 
             return (
