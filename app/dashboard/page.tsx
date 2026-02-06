@@ -80,12 +80,40 @@ function parseMonthYear(
 function calculateKPIs(data: any[], excludeSeverance = false) {
   if (!data || data.length === 0) return {};
 
-  // Helper to find column by possible names
+  // Normalize: map Latin lookalikes to Greek, lowercase, collapse whitespace
+  function normalize(s: string) {
+    return s
+      .replace(/O/g, "\u039F").replace(/I/g, "\u0399").replace(/A/g, "\u0391")
+      .replace(/E/g, "\u0395").replace(/H/g, "\u0397").replace(/K/g, "\u039A")
+      .replace(/M/g, "\u039C").replace(/N/g, "\u039D").replace(/P/g, "\u03A1")
+      .replace(/T/g, "\u03A4").replace(/X/g, "\u03A7").replace(/Y/g, "\u03A5")
+      .replace(/Z/g, "\u0396").replace(/B/g, "\u0392")
+      .toLowerCase().replace(/\s+/g, " ").trim();
+  }
+
+  // Helper to find column by possible names (with fuzzy Greek/Latin matching)
   function findCol(row: any, names: any) {
+    // Exact match first
     for (const name of names) {
       if (row.hasOwnProperty(name)) return name;
     }
-    return names[0]; // fallback
+    // Normalized match against actual row keys
+    const rowKeys = Object.keys(row);
+    for (const name of names) {
+      const nn = normalize(name);
+      for (const key of rowKeys) {
+        if (normalize(key) === nn) return key;
+      }
+    }
+    // Keyword match as last resort
+    for (const name of names) {
+      const keywords = name.toLowerCase().split(/[\s()/,]+/).filter((w: string) => w.length > 3);
+      for (const key of rowKeys) {
+        const kl = key.toLowerCase();
+        if (keywords.length > 0 && keywords.every((kw: string) => kl.includes(kw))) return key;
+      }
+    }
+    return names[0];
   }
 
   // All possible column names for each KPI
@@ -93,13 +121,14 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
     sales: ["ΠΩΛΗΣΕΙΣ (SALES)", "Sales"],
     purchases: ["ΑΓΟΡΕΣ (Purchases)", "Purchases"],
     payroll: [
+      "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ (Payroll (Adjusted))",
       "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ (Payroll (Adjusted)",
       "Payroll (Adjusted)",
       "Payroll",
     ],
-    utilities: ["ΔΕΚO (Utilities)", "Utilities"],
-    otherExpenses: ["ΛΟIΠΑ ΕΞΟΔΑ (Other Expenses)", "Other Expenses"],
-    rent: ["ΕΝΟIΚΙO (RENT)", "Rent"],
+    utilities: ["ΔΕΚΟ (Utilities)", "ΔΕΚO (Utilities)", "Utilities"],
+    otherExpenses: ["ΛΟΙΠΑ ΕΞΟΔΑ (Other Expenses)", "ΛΟIΠΑ ΕΞΟΔΑ (Other Expenses)", "Other Expenses"],
+    rent: ["ΕΝΟΙΚΙΟ (RENT)", "ΕΝΟIΚΙO (RENT)", "Rent"],
     fees: ["FEES", "Fees"],
     severance: ["ΑΠΟΖ/ΣΕΙΣ (Severance Payments)", "Severance Payments"],
     contributionMargin: ["Contribution Margin"],
