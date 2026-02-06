@@ -80,40 +80,37 @@ function parseMonthYear(
 function calculateKPIs(data: any[], excludeSeverance = false) {
   if (!data || data.length === 0) return {};
 
-  // Normalize: map Latin lookalikes to Greek, lowercase, collapse whitespace
-  function normalize(s: string) {
-    return s
-      .replace(/O/g, "\u039F").replace(/I/g, "\u0399").replace(/A/g, "\u0391")
-      .replace(/E/g, "\u0395").replace(/H/g, "\u0397").replace(/K/g, "\u039A")
-      .replace(/M/g, "\u039C").replace(/N/g, "\u039D").replace(/P/g, "\u03A1")
-      .replace(/T/g, "\u03A4").replace(/X/g, "\u03A7").replace(/Y/g, "\u03A5")
-      .replace(/Z/g, "\u0396").replace(/B/g, "\u0392")
-      .toLowerCase().replace(/\s+/g, " ").trim();
-  }
-
-  // Helper to find column by possible names (with fuzzy Greek/Latin matching)
-  function findCol(row: any, names: any) {
-    // Exact match first
+  // Helper to find column by possible names
+  function findCol(row: any, names: string[]) {
+    const rowKeys = Object.keys(row);
+    // 1. Exact match
     for (const name of names) {
       if (row.hasOwnProperty(name)) return name;
     }
-    // Normalized match against actual row keys
-    const rowKeys = Object.keys(row);
+    // 2. Case-insensitive match with whitespace normalization
     for (const name of names) {
-      const nn = normalize(name);
+      const n = name.toLowerCase().replace(/\s+/g, " ").trim();
       for (const key of rowKeys) {
-        if (normalize(key) === nn) return key;
+        if (key.toLowerCase().replace(/\s+/g, " ").trim() === n) return key;
       }
     }
-    // Keyword match as last resort
+    // 3. Keyword-based match: extract meaningful words and check if all appear in key
     for (const name of names) {
-      const keywords = name.toLowerCase().split(/[\s()/,]+/).filter((w: string) => w.length > 3);
+      const keywords = name.toLowerCase().split(/[\s()/,]+/).filter((w: string) => w.length > 2);
       for (const key of rowKeys) {
         const kl = key.toLowerCase();
         if (keywords.length > 0 && keywords.every((kw: string) => kl.includes(kw))) return key;
       }
     }
-    return names[0];
+    // 4. Partial match: check if any name is contained in any key or vice versa
+    for (const name of names) {
+      const nl = name.toLowerCase();
+      for (const key of rowKeys) {
+        const kl = key.toLowerCase();
+        if (kl.includes(nl) || nl.includes(kl)) return key;
+      }
+    }
+    return names[0]; // fallback
   }
 
   // All possible column names for each KPI
@@ -123,17 +120,25 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
     payroll: [
       "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ (Payroll (Adjusted))",
       "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ (Payroll (Adjusted)",
+      "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ",
       "Payroll (Adjusted)",
       "Payroll",
     ],
     utilities: ["ΔΕΚΟ (Utilities)", "ΔΕΚO (Utilities)", "Utilities"],
     otherExpenses: ["ΛΟΙΠΑ ΕΞΟΔΑ (Other Expenses)", "ΛΟIΠΑ ΕΞΟΔΑ (Other Expenses)", "Other Expenses"],
-    rent: ["ΕΝΟΙΚΙΟ (RENT)", "ΕΝΟIΚΙO (RENT)", "Rent"],
+    rent: ["ΕΝΟΙΚΙΟ (RENT)", "ΕΝΟIΚΙO (RENT)", "ΕΝΟΙΚΙΟ", "Rent"],
     fees: ["FEES", "Fees"],
     severance: ["ΑΠΟΖ/ΣΕΙΣ (Severance Payments)", "Severance Payments"],
     contributionMargin: ["Contribution Margin"],
     ebitda: ["EBITDA"],
-    salesOfServices: ["ΠΩΛΗΣΕΙΣ BLUE (BLUE SALES)", "ΠΩΛΗΣΕΙΣ BLUE", "Blue Sales", "Sales of Services"],
+    salesOfServices: [
+      "ΠΩΛΗΣΕΙΣ ΥΠΗΡΕΣΙΩΝ (Sales of Services)",
+      "ΠΩΛΗΣΕΙΣ BLUE (BLUE SALES)",
+      "ΠΩΛΗΣΕΙΣ ΥΠΗΡΕΣΙΩΝ",
+      "ΠΩΛΗΣΕΙΣ BLUE",
+      "Sales of Services",
+      "Blue Sales",
+    ],
   };
 
   // Sum helper that removes euro symbol and parses
@@ -162,6 +167,16 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
   const severance = sum(colNames.severance);
   const contributionMargin = sum(colNames.contributionMargin);
   let ebitda = sum(colNames.ebitda);
+
+  // Debug: log which columns were found
+  if (data.length > 0) {
+    const row = data[0];
+    const rowKeys = Object.keys(row);
+    console.log("KPI DEBUG - All columns from data:", rowKeys);
+    console.log("KPI DEBUG - Payroll column found:", findCol(row, colNames.payroll));
+    console.log("KPI DEBUG - SalesOfServices column found:", findCol(row, colNames.salesOfServices));
+    console.log("KPI DEBUG - Sales:", sales, "SalesOfServices:", salesOfServices, "TotalRevenue:", totalRevenue, "Payroll:", payroll);
+  }
 
   if (excludeSeverance && severance) {
     ebitda = ebitda + severance;
