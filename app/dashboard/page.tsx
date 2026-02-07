@@ -1,9 +1,12 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
+import ExcelDataTable from "@/components/ExcelDataTable";
 import { useAuth } from "@/components/AuthProvider";
 import { Button } from "@/components/ui/button";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 import { FreeSerif } from "@/fonts/FreeSerif";
 import {
   Download,
@@ -13,9 +16,24 @@ import {
   Calendar,
   Store as StoreIcon,
   BarChart3,
+  ArrowUpDown,
+  Image,
+  ChartBar,
   LogOut,
-  AlertTriangle,
 } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  ComposedChart,
+} from "recharts";
 import StoreList from "@/components/StoreList";
 import FinancialDashboard from "../../components/financial-dashboard/page";
 
@@ -59,125 +77,50 @@ function parseMonthYear(
   return { month, year };
 }
 
-/** --- Robust normalization for column matching (Greek/Latin lookalikes, spaces, punctuation) --- */
-function normalizeHeader(s: any) {
-  const str = String(s ?? "");
-
-  // Replace common Latin lookalikes with Greek (and vice versa where needed)
-  const map: Record<string, string> = {
-    // Latin -> Greek lookalikes
-    O: "Ο",
-    I: "Ι",
-    A: "Α",
-    B: "Β",
-    E: "Ε",
-    H: "Η",
-    K: "Κ",
-    M: "Μ",
-    N: "Ν",
-    P: "Ρ",
-    T: "Τ",
-    Y: "Υ",
-    X: "Χ",
-    o: "ο",
-    i: "ι",
-    a: "α",
-    e: "ε",
-    h: "η",
-    k: "κ",
-    m: "μ",
-    n: "ν",
-    p: "ρ",
-    t: "τ",
-    y: "υ",
-    x: "χ",
-  };
-
-  let out = "";
-  for (const ch of str) out += map[ch] ?? ch;
-
-  // Normalize whitespace and remove invisible weirdness
-  out = out
-    .replace(/\u00A0/g, " ") // nbsp
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-
-  // Remove trailing/leading punctuation variance
-  out = out.replace(/[()]+/g, (m) => m); // keep parentheses but normalize via lower/trim already
-
-  return out;
-}
-
 function calculateKPIs(data: any[], excludeSeverance = false) {
   if (!data || data.length === 0) return {};
 
-  // Helper to find column by possible names (robust)
-  function findCol(row: any, candidates: string[]) {
-    const keys = Object.keys(row ?? {});
-    const normKeys = new Map<string, string>(); // normalized -> original
-    for (const k of keys) normKeys.set(normalizeHeader(k), k);
-
-    for (const c of candidates) {
-      const hit = normKeys.get(normalizeHeader(c));
-      if (hit) return hit;
+  // Helper to find column by possible names
+  function findCol(row: any, names: any) {
+    for (const name of names) {
+      if (row.hasOwnProperty(name)) return name;
     }
-    return null;
+    return names[0]; // fallback
   }
 
   // All possible column names for each KPI
   const colNames = {
     sales: ["ΠΩΛΗΣΕΙΣ (SALES)", "Sales"],
-    salesServices: [
-      "ΠΩΛΗΣΕΙΣ ΥΠΗΡΕΣΙΩΝ (Sales of Services)",
-      "Sales of Services",
-      "ΠΩΛΗΣΕΙΣ ΥΠΗΡΕΣΙΩΝ",
-    ],
     purchases: ["ΑΓΟΡΕΣ (Purchases)", "Purchases"],
     payroll: [
-      "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ (Payroll (Adjusted))",
       "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ (Payroll (Adjusted)",
       "Payroll (Adjusted)",
       "Payroll",
     ],
-    utilities: ["ΔΕΚΟ (Utilities)", "Utilities", "ΔΕΚO (Utilities)"],
-    otherExpenses: [
-      "ΛΟΙΠΑ ΕΞΟΔΑ (Other Expenses)",
-      "Other Expenses",
-      "ΛΟIΠΑ ΕΞΟΔΑ (Other Expenses)",
-    ],
-    rent: ["ΕΝΟΙΚΙΟ (RENT)", "Rent", "ΕΝΟIΚΙO (RENT)"],
+    utilities: ["ΔΕΚO (Utilities)", "Utilities"],
+    otherExpenses: ["ΛΟIΠΑ ΕΞΟΔΑ (Other Expenses)", "Other Expenses"],
+    rent: ["ΕΝΟIΚΙO (RENT)", "Rent"],
     fees: ["FEES", "Fees"],
     severance: ["ΑΠΟΖ/ΣΕΙΣ (Severance Payments)", "Severance Payments"],
     contributionMargin: ["Contribution Margin"],
     ebitda: ["EBITDA"],
   };
 
-  // Parse number helper
-  function toNumber(val: any) {
-    if (val === null || val === undefined) return 0;
-    if (typeof val === "number") return isNaN(val) ? 0 : val;
-    const s = String(val)
-      .replace(/€/g, "")
-      .replace(/,/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    const n = parseFloat(s);
-    return isNaN(n) ? 0 : n;
-  }
-
-  function sum(cols: string[]) {
+  // Sum helper that removes euro symbol and parses
+  function sum(names: any) {
     return data.reduce((acc, row) => {
-      const col = findCol(row, cols);
-      if (!col) return acc;
-      return acc + toNumber(row[col]);
+      const col = findCol(row, names);
+      let val = row[col];
+      if (typeof val === "string" && val.includes("€")) {
+        val = val.replace(/€/g, "").replace(/,/g, "").trim();
+        val = parseFloat(val) || 0;
+      }
+      val = parseFloat(val);
+      return acc + (isNaN(val) ? 0 : val);
     }, 0);
   }
 
   const sales = sum(colNames.sales);
-  const salesServices = sum(colNames.salesServices);
-  const totalRevenue = sales + salesServices;
-
   const purchases = sum(colNames.purchases);
   const payroll = sum(colNames.payroll);
   const utilities = sum(colNames.utilities);
@@ -199,8 +142,6 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
 
   return {
     sales,
-    salesServices,
-    totalRevenue,
     purchases,
     payroll,
     utilities,
@@ -210,29 +151,28 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
     ebitda,
     severance,
     contributionMargin,
-
-    // Percentages always on TOTAL REVENUE (Sales + Sales of Services)
-    foodCostPercent: percent(purchases, totalRevenue),
-    payrollPercent: percent(payroll, totalRevenue),
-    utilitiesPercent: percent(utilities, totalRevenue),
-    otherExpensesPercent: percent(otherExpenses, totalRevenue),
-    rentPercent: percent(rent, totalRevenue),
-    feesPercent: percent(fees, totalRevenue),
-    ebitdaPercent: percent(ebitda, totalRevenue),
-    contributionMarginPercent: percent(contributionMargin, totalRevenue),
+    foodCostPercent: percent(purchases, sales),
+    payrollPercent: percent(payroll, sales),
+    utilitiesPercent: percent(utilities, sales),
+    otherExpensesPercent: percent(otherExpenses, sales),
+    rentPercent: percent(rent, sales),
+    feesPercent: percent(fees, sales),
+    ebitdaPercent: percent(ebitda, sales),
+    contributionMarginPercent: percent(contributionMargin, sales),
   };
 }
 
 export default function DashboardPage() {
   const { role, assignedStores, logout } = useAuth();
 
+  // State from original code
   const [links, setLinks] = useState<Link[]>([]);
   const [selectedLink, setSelectedLink] = useState<Link | null>(null);
   const [excelData, setExcelData] = useState<ExcelRow[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Filters
+  // New filter states
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [selectedStores, setSelectedStores] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<string>("all");
@@ -240,7 +180,16 @@ export default function DashboardPage() {
   const [periodEnd, setPeriodEnd] = useState<string>("");
   const [excludeSeverance, setExcludeSeverance] = useState(false);
 
-  // Fetch Excel links
+  // Comparison settings
+  const [comparisonMode, setComparisonMode] = useState<
+    "none" | "stores" | "ytd" | "yoy"
+  >("none");
+  const [compareStores, setCompareStores] = useState<string[]>([]);
+  const [yoyYear, setYoyYear] = useState<string>("");
+
+  console.log("Assigned Stores:", assignedStores);
+
+  // Fetch Excel links (from original code)
   useEffect(() => {
     fetch("/api/excel_links")
       .then((res) => res.json())
@@ -251,7 +200,7 @@ export default function DashboardPage() {
       .catch(() => setLinks([]));
   }, []);
 
-  // Fetch Excel data when link changes
+  // Fetch Excel data when link changes (from original code)
   useEffect(() => {
     if (!selectedLink) return;
 
@@ -270,28 +219,20 @@ export default function DashboardPage() {
     });
   }, [selectedLink]);
 
-  // Hide empty helper (for display only)
-  const isEmptyCol = (c: string) =>
-    String(c ?? "").toUpperCase().startsWith("__EMPTY");
-
-  const displayColumns = useMemo(
-    () => (columns || []).filter((c) => !isEmptyCol(c)),
-    [columns],
-  );
-
-  // Unique months
+  // Get unique months and years from first column, stores from second column
   const allMonths = useMemo(() => {
     if (!excelData.length || columns.length < 1) return [];
     return [...new Set(excelData.map((row) => row[columns[0]]))].sort();
   }, [excelData, columns]);
 
-  // Stores
   const allStores = useMemo(() => {
     if (!excelData.length || columns.length < 2) return [];
     if (role !== "client") {
       return [...new Set(excelData.map((row) => row[columns[1]]))];
     }
-    if (assignedStores.length === 0) return [];
+    if (assignedStores.length === 0) {
+      return [];
+    }
     const assigned = assignedStores.map((s) => s.toLowerCase());
     return [
       ...new Set(
@@ -302,7 +243,9 @@ export default function DashboardPage() {
     ];
   }, [excelData, assignedStores, role, columns]);
 
-  // Years
+  const normalizedColumns = columns.map((c) => c.toLowerCase());
+
+  // Extract years from first column
   const allYears = useMemo(() => {
     if (!excelData.length || columns.length < 1) return [];
     const years = new Set<string>();
@@ -313,11 +256,10 @@ export default function DashboardPage() {
     return Array.from(years).sort();
   }, [excelData, columns]);
 
-  // Filtered data
+  // Filtered data (enhanced from original)
   const filteredData = useMemo(() => {
     let data = excelData;
-
-    // Role authorization
+    // Role authorization (from original code)
     if (role === "client" && columns.length >= 2) {
       const normalizedAssignedStores = assignedStores.map((store) =>
         store.toLowerCase().replace(/\s+/g, ""),
@@ -329,21 +271,18 @@ export default function DashboardPage() {
         return normalizedAssignedStores.includes(rowStore);
       });
     }
-
-    // Month filter
+    // Month filter (multi-select)
     if (selectedMonths.length > 0 && columns.length >= 1) {
       data = data.filter((row) =>
         selectedMonths.includes(row[columns[0]] || ""),
       );
     }
-
-    // Store filter
+    // Store filter (multi-select)
     if (selectedStores.length > 0 && columns.length >= 2) {
       data = data.filter((row) =>
         selectedStores.includes(row[columns[1]] || ""),
       );
     }
-
     // Year filter
     if (selectedYear !== "all" && columns.length >= 1) {
       data = data.filter((row) => {
@@ -351,7 +290,6 @@ export default function DashboardPage() {
         return parsed && parsed.year.toString() === selectedYear;
       });
     }
-
     // Period filter
     if (periodStart && periodEnd && columns.length >= 1) {
       const startParsed = parseMonthYear(periodStart);
@@ -375,7 +313,6 @@ export default function DashboardPage() {
         });
       }
     }
-
     return data;
   }, [
     excelData,
@@ -393,7 +330,7 @@ export default function DashboardPage() {
   const kpis = useMemo(
     () => calculateKPIs(filteredData, excludeSeverance),
     [filteredData, excludeSeverance],
-  ) as any;
+  );
 
   const formatCurrency = (val: number | string | null | undefined) => {
     if (val === null || val === undefined || isNaN(Number(val))) return "€0.00";
@@ -404,6 +341,190 @@ export default function DashboardPage() {
         maximumFractionDigits: 2,
       })
     );
+  };
+
+  const exportCSV = () => {
+    if (filteredData.length === 0) return;
+
+    const numberFormatter = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    const toNumber = (val: string | number | null | undefined) =>
+      parseFloat(
+        String(val ?? "")
+          .replace(/€/g, "")
+          .replace(/,/g, "")
+          .trim(),
+      ) || 0;
+
+    // 🔑 MUST escape commas & quotes
+    const escapeCSV = (value: string | number | null | undefined) => {
+      const str = String(value ?? "");
+      return str.includes(",") || str.includes('"')
+        ? `"${str.replace(/"/g, '""')}"`
+        : str;
+    };
+
+    // -------- Header --------
+    const header = columns.map(escapeCSV).join(",");
+
+    // -------- Rows --------
+    const rows = filteredData.map((row) =>
+      columns
+        .map((col, index) => {
+          if (index <= 1) {
+            return escapeCSV(row[col]);
+          }
+
+          const num = toNumber(row[col]);
+          return escapeCSV(`€ ${numberFormatter.format(num)}`);
+        })
+        .join(","),
+    );
+
+    // -------- Totals --------
+    const totals = columns
+      .map((_, index) => {
+        if (index === 0) return escapeCSV("Total");
+        if (index === 1) return escapeCSV("");
+
+        const sum = filteredData.reduce(
+          (acc, row) => acc + toNumber(row[columns[index]]),
+          0,
+        );
+
+        return escapeCSV(`€ ${numberFormatter.format(sum)}`);
+      })
+      .join(",");
+
+    // -------- CSV Content (CRLF for Excel) --------
+    const csvContent = "\ufeff" + [header, ...rows, totals].join("\r\n");
+
+    const blob = new Blob([csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "filtered-data.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportPDF = () => {
+    if (filteredData.length === 0) return;
+
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: [520, 210],
+    });
+
+    doc.addFileToVFS("FreeSerif.ttf", FreeSerif);
+    doc.addFont("FreeSerif.ttf", "FreeSerif", "normal");
+    doc.setFont("FreeSerif");
+
+    doc.setFontSize(16);
+    doc.text("Filtered Data Export", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 22);
+
+    const numberFormatter = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    const toNumber = (val: string | number | null | undefined) =>
+      parseFloat(
+        String(val ?? "")
+          .replace(/€/g, "")
+          .replace(/,/g, "")
+          .trim(),
+      ) || 0;
+
+    const EBITDA_COL_INDEX = columns.findIndex(
+      (c) => c.toLowerCase() === "ebitda",
+    );
+
+    // ---------------- Table Body ----------------
+    const tableData = filteredData.map((row) =>
+      columns.map((col, index) => {
+        if (index <= 1) return String(row[col] ?? "");
+
+        const num = toNumber(row[col]);
+        return `€ ${numberFormatter.format(num)}`;
+      }),
+    );
+
+    // ---------------- Totals ----------------
+    const totals = columns.map((_, index) => {
+      if (index === 0) return "Total";
+      if (index === 1) return "";
+
+      const sum = filteredData.reduce(
+        (acc, row) => acc + toNumber(row[columns[index]]),
+        0,
+      );
+
+      return `€ ${numberFormatter.format(sum)}`;
+    });
+
+    tableData.push(totals);
+
+    // ---------------- AutoTable ----------------
+    autoTable(doc, {
+      head: [columns],
+      body: tableData,
+      startY: 30,
+      styles: {
+        font: "FreeSerif",
+        fontSize: 8,
+        cellPadding: 2,
+      },
+      headStyles: {
+        fillColor: [66, 139, 202],
+        textColor: [255, 255, 255],
+        fontStyle: "normal",
+        font: "FreeSerif",
+      },
+
+      didParseCell: function (data) {
+        const rowIndex = data.row.index;
+        const colIndex = data.column.index;
+
+        // Left-align first two columns
+        if (colIndex <= 1) {
+          data.cell.styles.halign = "left";
+        }
+
+        // Bold totals row
+        if (rowIndex === tableData.length - 1) {
+          data.cell.styles.fontStyle = "bold";
+        }
+
+        // EBITDA negative → RED
+        if (colIndex === EBITDA_COL_INDEX && rowIndex < tableData.length) {
+          const rawValue =
+            rowIndex === tableData.length - 1
+              ? toNumber(
+                  filteredData.reduce(
+                    (a, r) => a + toNumber(r[columns[colIndex]]),
+                    0,
+                  ),
+                )
+              : toNumber(filteredData[rowIndex][columns[colIndex]]);
+
+          if (rawValue < 0) {
+            data.cell.styles.textColor = [200, 0, 0];
+          }
+        }
+      },
+    });
+
+    doc.save("filtered-data.pdf");
   };
 
   const toggleMonth = (month: string) => {
@@ -436,28 +557,37 @@ export default function DashboardPage() {
     return true;
   };
 
+  // Update Period Start with validation
   const handlePeriodStartChange = (value: string) => {
-    if (validateMonthOrder(value, periodEnd)) setPeriodStart(value);
+    if (validateMonthOrder(value, periodEnd)) {
+      setPeriodStart(value);
+    }
   };
 
+  // Update Period End with validation
   const handlePeriodEndChange = (value: string) => {
-    if (validateMonthOrder(periodStart, value)) setPeriodEnd(value);
+    if (validateMonthOrder(periodStart, value)) {
+      setPeriodEnd(value);
+    }
   };
 
-  // Ensure month order
+  // Ensure the first column (Month) is always in ascending order
   const sortedMonths = useMemo(() => {
     return allMonths.sort((a, b) => {
       const parsedA = parseMonthYear(a);
       const parsedB = parseMonthYear(b);
 
       if (parsedA && parsedB) {
-        if (parsedA.year === parsedB.year) return parsedA.month - parsedB.month;
+        if (parsedA.year === parsedB.year) {
+          return parsedA.month - parsedB.month;
+        }
         return parsedA.year - parsedB.year;
       }
       return 0;
     });
   }, [allMonths]);
 
+  // Clear all filters
   const clearFilters = () => {
     setSelectedMonths([]);
     setSelectedStores([]);
@@ -465,11 +595,6 @@ export default function DashboardPage() {
     setPeriodStart("");
     setPeriodEnd("");
   };
-
-  // Business warning: Sales is too small vs Services
-  const showRevenueMixWarning =
-    (kpis?.totalRevenue ?? 0) > 0 &&
-    (kpis?.sales ?? 0) / (kpis?.totalRevenue ?? 1) < 0.2;
 
   if (loading) {
     return (
@@ -497,14 +622,6 @@ export default function DashboardPage() {
                 <p className="text-slate-600 mt-1">
                   Comprehensive analytics with multi-dimensional comparisons
                 </p>
-
-                {showRevenueMixWarning && (
-                  <div className="mt-3 inline-flex items-center gap-2 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-1 text-sm text-yellow-800">
-                    <AlertTriangle className="w-4 h-4" />
-                    Sales are a small share of Total Revenue — KPIs are driven by
-                    services.
-                  </div>
-                )}
               </div>
               <div>
                 <Button
@@ -517,10 +634,9 @@ export default function DashboardPage() {
                 </Button>
               </div>
             </div>
-
             <div className="w-full md:w-1/2 flex flex-row gap-2 mt-4 md:mt-0 items-end justify-end md:justify-between">
               <Button
-                onClick={() => {}}
+                onClick={exportCSV}
                 variant="outline"
                 size="lg"
                 className="cursor-pointer bg-blue-500 text-white hover:bg-blue-600 border-blue-600 hover:border-blue-700"
@@ -529,10 +645,10 @@ export default function DashboardPage() {
                 CSV <span className="hidden md:flex">Download</span>
               </Button>
               <Button
-                onClick={() => {}}
+                onClick={exportPDF}
                 variant="outline"
                 size="lg"
-                className="cursor-pointer bg-blue-500 text-white hover:bg-blue-600 border-blue-600 hover:border-blue-700"
+                className="cursor-pointer bg-blue-500 text-white hover:bg-blue-600 border-blue-600 hover:border-blue-700  "
               >
                 <Download className="w-4 h-4 mr-2" />
                 PDF <span className="hidden md:flex">Download</span>
@@ -542,12 +658,12 @@ export default function DashboardPage() {
                 variant="outline"
                 size="lg"
                 className="
-                  hidden md:flex 
-                  cursor-pointer 
-                  bg-red-500 text-white 
-                  hover:bg-red-600 
-                  border-red-600 hover:border-red-700
-                "
+    hidden md:flex 
+    cursor-pointer 
+    bg-red-500 text-white 
+    hover:bg-red-600 
+    border-red-600 hover:border-red-700
+  "
               >
                 <LogOut className="w-4 h-4 mr-2" />
                 Log Out
@@ -579,7 +695,7 @@ export default function DashboardPage() {
           </select>
         </div>
 
-        {/* Filters */}
+        {/* Advanced Filters */}
         <div className="bg-white rounded-xl shadow-lg p-3 md:p-6 space-y-3">
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
@@ -597,7 +713,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Year */}
+            {/* Year Filter */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
                 Year
@@ -703,7 +819,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Detailed Data Table (hide __EMPTY cols for display) */}
+        {/* Detailed Data Table */}
         <div className="bg-white rounded-xl shadow-lg p-3 md:p-6">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">
             Detailed Data Table
@@ -712,7 +828,7 @@ export default function DashboardPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b-2 border-slate-300">
-                  {displayColumns.map((col) => (
+                  {columns.map((col) => (
                     <th
                       key={col}
                       className="text-left py-3 px-4 font-semibold text-slate-700"
@@ -722,13 +838,12 @@ export default function DashboardPage() {
                   ))}
                 </tr>
               </thead>
-
               <tbody>
                 {filteredData.map((row, i) => (
                   <tr key={i} className="border-b hover:bg-slate-50">
-                    {displayColumns.map((col, idx) => {
+                    {columns.map((col, idx) => {
                       let value = row[col];
-
+                      // Always treat first column as Month
                       if (idx === 0) {
                         return (
                           <td
@@ -739,7 +854,7 @@ export default function DashboardPage() {
                           </td>
                         );
                       }
-
+                      // Remove euro symbol and convert to number if present
                       if (typeof value === "string" && value.includes("€")) {
                         value = value
                           .replace(/€/g, "")
@@ -749,10 +864,9 @@ export default function DashboardPage() {
                       }
                       const isNumeric = !isNaN(parseFloat(value));
                       const isNegative = isNumeric && parseFloat(value) < 0;
-
+                      // Accept both Greek and English column names for EBITDA
                       const isEBITDA =
-                        col === "EBITDA" || String(col).includes("EBITDA");
-
+                        col === "EBITDA" || col.includes("EBITDA");
                       return (
                         <td
                           key={col}
@@ -768,13 +882,12 @@ export default function DashboardPage() {
                     })}
                   </tr>
                 ))}
-
                 {filteredData.length > 1 && (
                   <tr className="bg-slate-100 font-bold">
                     <td className="py-3 px-4" colSpan={2}>
                       TOTAL
                     </td>
-                    {displayColumns.slice(2).map((col) => {
+                    {columns.slice(2).map((col) => {
                       const total = filteredData.reduce((sum, row) => {
                         let val = row[col];
                         if (typeof val === "string" && val.includes("€")) {
@@ -812,10 +925,18 @@ export default function DashboardPage() {
             <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
               <StoreList
                 readOnly
-                onEdit={function (): void {
+                onEdit={function (store: {
+                  id: string;
+                  name: string;
+                  storeId: string;
+                }): void {
                   throw new Error("Function not implemented.");
                 }}
-                onDelete={function (): void {
+                onDelete={function (store: {
+                  id: string;
+                  name: string;
+                  storeId: string;
+                }): void {
                   throw new Error("Function not implemented.");
                 }}
                 search={""}
@@ -830,13 +951,15 @@ export default function DashboardPage() {
             Total Records: {filteredData.length}
           </h1>
           <span className="text-xs md:text-sm text-gray-500">
-            (Rows after filters)
+            {" "}
+            (Total Number of Columns in the excel sheet)
           </span>
         </div>
 
-        {/* Cards: totals + % of Total Revenue */}
         <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {displayColumns.slice(2).map((col) => {
+          {columns.slice(2).map((col) => {
+            // Skip first column (Month)
+            // Remove euro symbol and convert to number if present
             const totalValue = filteredData.reduce((sum, row) => {
               let val = row[col];
               if (typeof val === "string" && val.includes("€")) {
@@ -846,27 +969,21 @@ export default function DashboardPage() {
               val = parseFloat(val);
               return sum + (isNaN(val) ? 0 : val);
             }, 0);
-
             const isNegative = totalValue < 0;
-            const isEBITDA = col === "EBITDA" || String(col).includes("EBITDA");
+            // Accept both Greek and English column names for EBITDA
+            const isEBITDA = col === "EBITDA" || col.includes("EBITDA");
             const isSeverance =
-              col === "Severance Payments" || String(col).includes("ΑΠΟΖ/ΣΕΙΣ");
+              col === "Severance Payments" || col.includes("ΑΠΟΖ/ΣΕΙΣ");
 
-            // Denominator: TOTAL REVENUE
-            const denom = kpis?.totalRevenue ?? 0;
-
-            // Don't show % for revenue lines themselves
-            const isSalesCol =
-              normalizeHeader(col) === normalizeHeader("ΠΩΛΗΣΕΙΣ (SALES)") ||
-              normalizeHeader(col) === normalizeHeader("Sales");
-            const isSalesServicesCol =
-              normalizeHeader(col) ===
-                normalizeHeader("ΠΩΛΗΣΕΙΣ ΥΠΗΡΕΣΙΩΝ (Sales of Services)") ||
-              normalizeHeader(col) === normalizeHeader("Sales of Services");
-
+            // Calculate percentage for this column relative to Sales
             let percentage = "—";
-            if (denom && denom !== 0 && !isSalesCol && !isSalesServicesCol) {
-              percentage = ((totalValue / denom) * 100).toFixed(2) + "%";
+            if (
+              kpis.sales &&
+              kpis.sales !== 0 &&
+              col !== "ΠΩΛΗΣΕΙΣ (SALES)" &&
+              col !== "Sales"
+            ) {
+              percentage = ((totalValue / kpis.sales) * 100).toFixed(2) + "%";
             }
 
             return (
@@ -889,7 +1006,6 @@ export default function DashboardPage() {
                       <TrendingUp className="w-5 h-5 text-green-500" />
                     ))}
                 </div>
-
                 <p
                   className={`text-lg md:text-xl font-bold mb-1 ${
                     isNegative ? "text-red-600" : "text-gray-900"
@@ -897,13 +1013,13 @@ export default function DashboardPage() {
                 >
                   {formatCurrency(totalValue)}
                 </p>
-
-                {!isSalesCol && !isSalesServicesCol && percentage !== "—" && (
-                  <p className="text-xs text-gray-500">
-                    {percentage} of Total Revenue
-                  </p>
-                )}
-
+                {col !== "ΠΩΛΗΣΕΙΣ (SALES)" &&
+                  col !== "Sales" &&
+                  percentage !== "—" && (
+                    <p className="text-xs text-gray-500">
+                      {percentage} of Sales
+                    </p>
+                  )}
                 {isSeverance && totalValue > 0 && (
                   <p className="text-xs text-orange-600 font-medium mt-1">
                     Non-recurring
@@ -914,16 +1030,9 @@ export default function DashboardPage() {
           })}
         </div>
 
-        {/* KPI % section */}
-        <div className="px-2">
-          <h1 className="text-xl md:text-2xl font-bold text-blue-700 mb-2">
-            All KPI Percentages
-          </h1>
-          <p className="text-sm text-slate-600">
-            All percentages are calculated on <b>Total Revenue</b> (Sales + Sales
-            of Services).
-          </p>
-        </div>
+        <h1 className="text-xl md:text-2xl font-bold text-blue-700 mb-4 px-2">
+          All KPIs Percentages
+        </h1>
 
         <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white rounded-lg shadow-sm p-3 md:p-6 border-l-4 border-blue-400">
@@ -934,7 +1043,6 @@ export default function DashboardPage() {
               {kpis.foodCostPercent}
             </p>
           </div>
-
           <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-400">
             <h3 className="text-sm font-medium text-gray-600 mb-2">
               Payroll %
@@ -943,7 +1051,6 @@ export default function DashboardPage() {
               {kpis.payrollPercent}
             </p>
           </div>
-
           <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-400">
             <h3 className="text-sm font-medium text-gray-600 mb-2">
               Utilities %
@@ -952,7 +1059,6 @@ export default function DashboardPage() {
               {kpis.utilitiesPercent}
             </p>
           </div>
-
           <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-400">
             <h3 className="text-sm font-medium text-gray-600 mb-2">
               Other Expenses %
@@ -961,32 +1067,24 @@ export default function DashboardPage() {
               {kpis.otherExpensesPercent}
             </p>
           </div>
-
           <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-400">
             <h3 className="text-sm font-medium text-gray-600 mb-2">Rent %</h3>
             <p className="text-2xl font-bold mb-1 text-gray-900">
               {kpis.rentPercent}
             </p>
           </div>
-
           <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-400">
             <h3 className="text-sm font-medium text-gray-600 mb-2">Fees %</h3>
             <p className="text-2xl font-bold mb-1 text-gray-900">
               {kpis.feesPercent}
             </p>
           </div>
-
           <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-400">
             <h3 className="text-sm font-medium text-gray-600 mb-2">EBITDA %</h3>
-            <p
-              className={`text-2xl font-bold mb-1 ${
-                (kpis?.ebitda ?? 0) < 0 ? "text-red-600" : "text-gray-900"
-              }`}
-            >
+            <p className="text-2xl font-bold mb-1 text-gray-900">
               {kpis.ebitdaPercent}
             </p>
           </div>
-
           <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-400">
             <h3 className="text-sm font-medium text-gray-600 mb-2">
               Contribution Margin %
@@ -997,7 +1095,6 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-
       <FinancialDashboard />
     </div>
   );
