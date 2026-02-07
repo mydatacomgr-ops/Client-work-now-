@@ -94,13 +94,20 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
         if (key.toLowerCase().replace(/\s+/g, " ").trim() === n) return key;
       }
     }
-    // 3. Keyword-based match: extract meaningful words (4+ chars) and check if all appear in key
+    // 3. Keyword-based match: extract meaningful words and check if all appear in key
     for (const name of names) {
-      const keywords = name.toLowerCase().split(/[\s()/,]+/).filter((w: string) => w.length > 3);
-      if (keywords.length === 0) continue;
+      const keywords = name.toLowerCase().split(/[\s()/,]+/).filter((w: string) => w.length > 2);
       for (const key of rowKeys) {
         const kl = key.toLowerCase();
-        if (keywords.every((kw: string) => kl.includes(kw))) return key;
+        if (keywords.length > 0 && keywords.every((kw: string) => kl.includes(kw))) return key;
+      }
+    }
+    // 4. Partial match: check if any name is contained in any key or vice versa
+    for (const name of names) {
+      const nl = name.toLowerCase();
+      for (const key of rowKeys) {
+        const kl = key.toLowerCase();
+        if (kl.includes(nl) || nl.includes(kl)) return key;
       }
     }
     return names[0]; // fallback
@@ -108,7 +115,7 @@ function calculateKPIs(data: any[], excludeSeverance = false) {
 
   // All possible column names for each KPI
   const colNames = {
-    sales: ["ΠΩΛΗΣΕΙΣ (SALES)"],
+    sales: ["ΠΩΛΗΣΕΙΣ (SALES)", "Sales"],
     purchases: ["ΑΓΟΡΕΣ (Purchases)", "Purchases"],
     payroll: [
       "ΑΝΑΠ/ΜΕΝΗ ΜΙΣΘΟΔΟΣΙΑ (Payroll (Adjusted))",
@@ -1019,13 +1026,13 @@ export default function DashboardPage() {
 
             // Calculate percentage for this column relative to Total Revenue (Sales + Sales of Services)
             let percentage = "—";
-            const isSalesCol = col.includes("ΠΩΛΗΣΕΙΣ") && !col.includes("ΥΠΗΡΕΣ") && !col.includes("BLUE");
-            const isSalesOfServicesCol = col.includes("ΥΠΗΡΕΣ") || col.includes("Sales of Services") || (col.includes("ΠΩΛΗΣΕΙΣ") && col.includes("BLUE"));
             if (
               kpis.totalRevenue &&
               kpis.totalRevenue !== 0 &&
-              !isSalesCol &&
-              !isSalesOfServicesCol
+              col !== "ΠΩΛΗΣΕΙΣ (SALES)" &&
+              col !== "Sales" &&
+              col !== "ΠΩΛΗΣΕΙΣ BLUE (BLUE SALES)" &&
+              col !== "Blue Sales"
             ) {
               percentage = ((totalValue / kpis.totalRevenue) * 100).toFixed(2) + "%";
             }
@@ -1061,7 +1068,7 @@ export default function DashboardPage() {
                   col !== "Sales" &&
                   percentage !== "—" && (
                     <p className="text-xs text-gray-500">
-                      {percentage} of Revenue
+                      {percentage} of Sales
                     </p>
                   )}
                 {isSeverance && totalValue > 0 && (
